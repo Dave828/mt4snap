@@ -20,6 +20,7 @@ from PIL import Image
 import pywinctl as pwc  # 跨平台窗口管理
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import os
 
 # ========= 配置区 =========
 UPLOAD_URL = "https://daved.xyz/rest/foex/uploadImg"  
@@ -101,7 +102,29 @@ def compress_image(img: Image.Image, quality=85) -> bytes:
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=quality, optimize=True)
     return out.getvalue()
-
+# 新增保存图片函数
+def save_local_image(jpeg_bytes: bytes) -> str:
+    """保存图片到本地按日期组织的目录，返回保存路径"""
+    # 确保根目录存在
+    if not os.path.exists(IMG_DIR):
+        os.makedirs(IMG_DIR)
+    
+    # 按日期创建子目录
+    today = datetime.now().strftime("%Y-%m-%d")
+    day_dir = os.path.join(IMG_DIR, today)
+    if not os.path.exists(day_dir):
+        os.makedirs(day_dir)
+    
+    # 生成文件名和完整路径
+    fname = datetime.now().strftime("%H%M%S.jpg")
+    fpath = os.path.join(day_dir, fname)
+    
+    # 保存图片
+    with open(fpath, "wb") as f:
+        f.write(jpeg_bytes)
+    
+    logging.info(f"图片已保存到: {fpath}")
+    return fpath
 def upload_image(binary_jpeg: bytes, token: str) -> str:
     """上传图片，成功返回图片的 URL（字符串）。失败抛出异常。"""
     fname = datetime.now().strftime("screenshot_%Y-%m-%d_%H%M%S.jpg")
@@ -159,6 +182,8 @@ def job_once():
     img = screenshot_window(win)
     jpeg = compress_image(img)
     logging.info(f"截图压缩后大小: {len(jpeg)/1024:.1f} KB")
+       # 保存到本地
+    local_path = save_local_image(jpeg)
     try:
         url = upload_image(jpeg, TOKEN)  # 返回图片 URL 字符串
         logging.info(f"上传成功, url: {url}")
