@@ -21,11 +21,53 @@ import pywinctl as pwc  # 跨平台窗口管理
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
+import subprocess
+from pathlib import Path
 
+
+# ...existing code...
+IMG_DIR = "img"  # 图片保存的根目录
+
+# 配置：优先从环境变量读取，支持项目根目录的 .env（若安装 python-dotenv 则优先使用）
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _load_env_file(path: str):
+    if not os.path.exists(path):
+        return
+    # 优先尝试 python-dotenv（若安装）
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(path)
+        return
+    except Exception:
+        pass
+    # 简单的 .env 解析回退方案
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                os.environ.setdefault(k, v)
+    except Exception:
+        pass
+
+# 尝试加载项目根目录下的 .env
+_load_env_file(os.path.join(REPO_DIR, ".env"))
+
+# 从环境变量读取，若未设置则使用原来的默认值或占位符
+UPLOAD_URL = os.environ.get("UPLOAD_URL", "/uploadImg")
+WXPUSHER_URL = os.environ.get("WXPUSHER_URL", "/wxPusher")
+TOKEN = os.environ.get("TOKEN", "")  # 强烈建议在 .env 或系统环境中设置 TOKEN
+
+IMG_DIR = "img"  # 图片保存的根目录
 # ========= 配置区 =========
-UPLOAD_URL = "https://daved.xyz/rest/foex/uploadImg"  
-WXPUSHER_URL = "https://daved.xyz/rest/foex/wxPusher"            # 推送接口
-TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJmMzZiMWVhYS1hNjZhLTQ3MzAtYWUwMS0wOWNkMWViNzM2ZDYiLCJzdWIiOiJ7XCJmb2V4QWNjb3VudHNcIjpbe1wiYWNjb3VudFwiOlwiOTMzMDM2XCIsXCJjb21wYW55XCI6XCJJQy1saXZlMDhcIixcImNyZWF0ZURhdGVcIjoxNzExNDQwODQ3ODQ2LFwiZGVmYXVsdFRQMVwiOjEuMSxcImRlbGV0ZUxpbWl0T3JkZXJcIjpcImVuYWJsZVwiLFwiZG9SZWNvcmRcIjpmYWxzZSxcImVhRmxhZ1wiOlwiZW5hYmxlXCIsXCJmZVVzZXJJZFwiOjksXCJmaXhlZFByaW5jaXBhbFwiOjAsXCJpZFwiOjYsXCJsZWdCYXJDb3VudFwiOjQsXCJtYW51YWxPcmRlclwiOlwiZGlzYWJsZVwiLFwicHJvZml0VFAxXCI6Mi4wLFwic3RhdGVcIjpcImVuYWJsZVwiLFwic3RvcExvc3NEb2xsYXJcIjowLFwic3RvcExvc3NSYXRlXCI6MTAsXCJ0cmFpbGluZ1N0b3BCYXJDb3VudFwiOjN9LHtcImFjY291bnRcIjpcIjIwOTEzMjc2MTNcIixcImNvbXBhbnlcIjpcIkZUTU9cIixcImNyZWF0ZURhdGVcIjoxNzAzMTY2MjQ1OTYzLFwiZGVmYXVsdFRQMVwiOjEuMSxcImRlbGV0ZUxpbWl0T3JkZXJcIjpcImRpc2FibGVcIixcImRvUmVjb3JkXCI6ZmFsc2UsXCJlYUZsYWdcIjpcImRpc2FibGVcIixcImZlVXNlcklkXCI6OSxcImZpeGVkUHJpbmNpcGFsXCI6OTAwMDAsXCJpZFwiOjgsXCJsZWdCYXJDb3VudFwiOjQsXCJtYW51YWxPcmRlclwiOlwiZW5hYmxlXCIsXCJwcm9maXRUUDFcIjoxMC4wLFwic3RhdGVcIjpcImVuYWJsZVwiLFwic3RvcExvc3NEb2xsYXJcIjowLFwic3RvcExvc3NSYXRlXCI6MjAsXCJ0cmFpbGluZ1N0b3BCYXJDb3VudFwiOjN9LHtcImFjY291bnRcIjpcIjU1MDIxNDE5XCIsXCJjb21wYW55XCI6XCJGdW5kZWROZXh0XCIsXCJjcmVhdGVEYXRlXCI6MTc1OTc2MTg3NTAwMCxcImRlZmF1bHRUUDFcIjoxLjIsXCJkZWxldGVMaW1pdE9yZGVyXCI6XCJkaXNhYmxlXCIsXCJkb1JlY29yZFwiOmZhbHNlLFwiZWFGbGFnXCI6XCJlbmFibGVcIixcImZlVXNlcklkXCI6OSxcImZpeGVkUHJpbmNpcGFsXCI6NTAwMCxcImlkXCI6MixcImxlZ0JhckNvdW50XCI6NCxcIm1hbnVhbE9yZGVyXCI6XCJkaXNhYmxlXCIsXCJwcm9maXRUUDFcIjoxMC4wLFwic3RhdGVcIjpcImVuYWJsZVwiLFwic3RvcExvc3NEb2xsYXJcIjowLFwic3RvcExvc3NSYXRlXCI6MjAsXCJ0cmFpbGluZ1N0b3BCYXJDb3VudFwiOjMsXCJ3eHVpZGNjXCI6XCJVSURfaVlYeG83Uk1sYUhFVlNCSVN5dVV4Z0MxRFZRQ1wifV0sXCJmb2V4QXBwUm9sZU5hbWVcIjpcIlvmnIDpq5jmnYPpmZBdXCIsXCJmb2V4VWlkXCI6OSxcImlkXCI6MTAxLFwidXNlcm5hbWVcIjpcIkRhdmVcIn0iLCJleHAiOjE4OTA1NzIwNTh9.P9shWDhazOix0KQ3JwhrXmW-GRdPe0ttrJZi6cbLX4gA1nOCEpukz7Juu0oNHNxhgvMHl4kHgUgMFBc8a_tYmwNzzfuBt2eIn2lq7pUVrDvD5m61b1w-kYtsyKyb5Vtd95rT6Tb7Q91tTp35is9cnI7ZBxFfH4jxSzurBeKd1oGa4d950MOKWN6rEp8tCtjgGYBYWvdJlIbs6AQxXZuM03jGGOU0wVwvtF1M8VOTO8tfLeJaLNGutZz2FbwVdP5MKB3Hsc8Td--9poaPtZEcp2S9fB7606yiUv-wsLCr-3w0ZGt70jth-TPGk0-rRa7SjTRyZVwAqFXaLKWLL1oiLw"
+# 添加Git相关配置
+GIT_REPO_PATH = REPO_DIR  # 替换为你的Git仓库本地路径
+GITHUB_REPO = "https://github.com/Dave828/mt4snap.git"  # 替换为你的GitHub仓库地址
 
 MAX_RETRY = 3
 TIMEOUT = 1500
@@ -171,31 +213,42 @@ def upload_image(binary_jpeg: bytes, token: str) -> str:
         backoff = min(backoff * 2, 30)
 
     raise RuntimeError("上传多次重试失败")
-
-def job_once():
-    """单次任务：截图 -> 上传"""
-    win = find_mt4_window()
-    if not win:
-        logging.warning("未找到窗口，跳过本次")
-        return
-    logging.info(f"捕获窗口: {win.title}")
-    img = screenshot_window(win)
-    jpeg = compress_image(img)
-    logging.info(f"截图压缩后大小: {len(jpeg)/1024:.1f} KB")
-       # 保存到本地
-    local_path = save_local_image(jpeg)
+# 添加Git操作相关函数
+def git_commit_and_push(file_path: str) -> bool:
+    """
+    将新保存的截图提交并推送到GitHub
+    :param file_path: 要提交的文件路径
+    :return: 是否成功
+    """
     try:
-        url = upload_image(jpeg, TOKEN)  # 返回图片 URL 字符串
-        logging.info(f"上传成功, url: {url}")
-        # 上传成功后调用推送接口
-        ok = send_wx_pusher(url, TOKEN, uid="UID_ofwaXLRDnlr8Rfg9hlGvhhq8M5NB")
-        if ok:
-            logging.info("已发送推送到 /wxPusher")
-        else:
-            logging.warning("推送到 /wxPusher 失败")
+        # 切换到仓库目录
+        os.chdir(GIT_REPO_PATH)
         
-    except Exception:
-        logging.error("上传失败: " + traceback.format_exc())
+        # 获取相对路径
+        rel_path = os.path.relpath(file_path, GIT_REPO_PATH)
+        
+        # 执行git命令
+        commands = [
+            ['git', 'add', rel_path],
+            ['git', 'commit', '-m', f'Add screenshot: {rel_path}'],
+            ['git', 'push', 'origin', 'main']  # 假设使用main分支，根据需要修改
+        ]
+        
+        for cmd in commands:
+            result = subprocess.run(cmd, 
+                                 capture_output=True, 
+                                 text=True)
+            if result.returncode != 0:
+                logging.error(f"Git命令失败 {' '.join(cmd)}: {result.stderr}")
+                return False
+            
+        logging.info(f"成功提交并推送文件到GitHub: {rel_path}")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Git操作异常: {str(e)}")
+        return False
+
 # 新增：发送到 /wxPusher
 def send_wx_pusher(img_url: str, token: str, uid: str = "UID_ofwaXLRDnlr8Rfg9hlGvhhq8M5NB") -> bool:
     """调用后台 /wxPusher，summary 为当前北京时间的描述，content 为图片 url。返回是否成功。"""
@@ -221,40 +274,76 @@ def send_wx_pusher(img_url: str, token: str, uid: str = "UID_ofwaXLRDnlr8Rfg9hlG
     except Exception:
         logging.error("发送 wxPusher 失败: " + traceback.format_exc())
         return False
-
+def job_once():
+    """单次任务：截图 -> 上传"""
+    win = find_mt4_window()
+    if not win:
+        logging.warning("未找到窗口，跳过本次")
+        return
+    logging.info(f"捕获窗口: {win.title}")
+    img = screenshot_window(win)
+    jpeg = compress_image(img)
+    logging.info(f"截图压缩后大小: {len(jpeg)/1024:.1f} KB")
+       # 保存到本地
+    local_path = save_local_image(jpeg)
+    # 提交到GitHub
+    # if git_commit_and_push(local_path):
+    #     logging.info("已提交截图到GitHub")
+    # else:
+    #     logging.warning("提交截图到GitHub失败")
+    try:
+        url = upload_image(jpeg, TOKEN)  # 返回图片 URL 字符串
+        logging.info(f"上传成功, url: {url}")
+        # 上传成功后调用推送接口
+        ok = send_wx_pusher(url, TOKEN, uid="UID_ofwaXLRDnlr8Rfg9hlGvhhq8M5NB")
+        if ok:
+            logging.info("已发送推送到 /wxPusher")
+        else:
+            logging.warning("推送到 /wxPusher 失败")
+        
+    except Exception:
+        logging.error("上传失败: " + traceback.format_exc())
 def main():
     tz = ZoneInfo("Asia/Shanghai")
-    logging.info("定时截图启动：北京时间每天 08:00-22:00 每小时执行一次，Ctrl-C 退出")
+    logging.info("定时截图启动：北京时间每天 08:00-22:00 每小时执行一次，周末暂停，Ctrl-C 退出")
     while True:
         try:
             now = datetime.now(tz)
-            if 8 <= now.hour <= 22:
-                job_once()
+
+            # 周末(周六=5, 周日=6)暂停截图
+            if now.weekday() >= 5:
+                logging.info(f"当前为周末 ({now.strftime('%A')})，暂停截图，等待到下周一 08:00 开始")
             else:
-                logging.info(f"当前北京时间 {now.strftime('%Y-%m-%d %H:%M:%S')}，不在执行窗口，跳过本次")
+                if 8 <= now.hour <= 22:
+                    job_once()
+                else:
+                    logging.info(f"当前北京时间 {now.strftime('%Y-%m-%d %H:%M:%S')}，不在执行时间段（08-22），跳过本次")
+
         except KeyboardInterrupt:
             logging.info("用户中断，退出")
             break
         except Exception:
             logging.error("任务异常: " + traceback.format_exc())
 
-        # 计算下次运行时间（下一个整点，若超出 08-22 则跳至下一个可执行整点）
+        # 计算下次运行时间
         now = datetime.now(tz)
-        next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
-
-        if next_hour.hour < 8:
-            # 今天 08:00
-            next_run = next_hour.replace(hour=8, minute=0, second=0, microsecond=0)
-        elif next_hour.hour > 22:
-            # 明天 08:00
-            next_run = (next_hour + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+        if now.weekday() >= 5:
+            # 周末：计算到下周一 08:00
+            days_ahead = (7 - now.weekday())  # 周六->2, 周日->1
+            next_run = (now + timedelta(days=days_ahead)).replace(hour=8, minute=0, second=0, microsecond=0)
         else:
-            next_run = next_hour
+            next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            if next_hour.hour < 8:
+                next_run = next_hour.replace(hour=8, minute=0, second=0, microsecond=0)
+            elif next_hour.hour > 22:
+                # 明天 08:00 （若明天为周末会在下一循环中被调整）
+                next_run = (next_hour + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+            else:
+                next_run = next_hour
 
         sleep_sec = (next_run - datetime.now(tz)).total_seconds()
         if sleep_sec > 0:
             logging.info(f"下次执行（北京时间）: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
             time.sleep(sleep_sec)
-
 if __name__ == "__main__":
     main()
